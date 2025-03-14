@@ -204,8 +204,7 @@ if st.sidebar.button("Run Test Queries"):
         ("How did the company perform last year?", "Low Confidence"),
         ("What is the capital of France?", "Irrelevant")
     ]
-
-    for test_query, confidence_level in test_queries:
+for test_query, confidence_level in test_queries:
     query_type = classify_query(test_query)
 
     if query_type == "irrelevant":

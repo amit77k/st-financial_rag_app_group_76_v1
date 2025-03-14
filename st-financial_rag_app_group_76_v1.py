@@ -92,10 +92,11 @@ def classify_query(query, threshold=0.45):
     
     # Fuzzy matching as a fallback
     best_match, score = process.extractOne(query, relevant_keywords)
-    if score > 80:  # Adjust score threshold as needed
-        return "relevant"
-
-    return "irrelevant"
+    if score > 80:
+    elif 50 <= score <= 80:
+        return "less relevant"
+    else:
+        return "irrelevant"
 
 # ✅ Hallucination Filtering (Output-Side)
 def filter_hallucinations(response, query, confidence_threshold=30):

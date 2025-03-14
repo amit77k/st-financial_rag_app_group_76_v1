@@ -114,7 +114,7 @@ def filter_hallucinations(response, query, confidence_threshold=30):
     
 
 # ✅ Multi-Stage Retrieval with Context Filtering , Hallucination Handling & Prompting
-def multistage_retrieve(query, k=3, bm25_k=200, alpha=0.7): 
+def multistage_retrieve(query, k=5, bm25_k=20, alpha=0.8): 
     if not query or not query.strip():
         return "No query provided.", 0.0
 

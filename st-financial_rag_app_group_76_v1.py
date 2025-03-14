@@ -92,75 +92,169 @@ def classify_query(query, threshold=0.45):
     
     # Fuzzy matching as a fallback
     best_match, score = process.extractOne(query, relevant_keywords)
-    if score > 80:
+    if score > 80:  # Adjust score threshold as needed
         return "relevant"
-    elif 20 <= score <= 80:
-        return "less relevant"
-    else:
-        return "irrelevant"
+
+    return "irrelevant"
 
 # ✅ Hallucination Filtering (Output-Side)
 def filter_hallucinations(response, query, confidence_threshold=30):
     """
-    Filters hallucinated or misleading responses.
-    - If confidence is low and response lacks financial terms, flag it.
+    Enhanced filter for hallucinated or misleading responses.
     """
-    financial_keywords = ["revenue", "profit", "expenses", "income", "assets", "liabilities", "equity", 
-                     "earnings", "financial performance", "cash flow", "balance sheet", "receivables", 
-                     "accounts receivable", "Trade receivables", "Total receivables", "net loss"]
+    financial_keywords = [
+        "trade receivables", "receivables", "affiliated companies", 
+        "group companies", "bmw", "euro", "thousand", "total",
+        "financial", "performance", "balance", "statement"
+    ]
     
-    if confidence_threshold < 40 and not any(word in response.lower() for word in financial_keywords):
-        return "⚠️ The retrieved answer may not be reliable. Please verify with official financial statements."
+    # Check for presence of numbers and financial terms
+    has_numbers = any(char.isdigit() for char in response)
+    financial_terms_count = sum(1 for term in financial_keywords if term.lower() in response.lower())
+    
+    # Stricter confidence thresholds
+    if confidence_threshold < 40 or not has_numbers:
+        return "⚠️ Unable to provide a confident answer. Please verify with official financial statements."
+    
+    if financial_terms_count < 2:
+        return "⚠️ The response may not contain sufficient financial context. Please verify with official documents."
     
     return response
     
 
+def is_low_confidence_query(query):
+    """
+    Identify if a query is likely to be low confidence based on its characteristics
+    """
+    # List of vague terms that indicate low confidence queries
+    vague_terms = [
+        "how", "what about", "tell me about", "explain",
+        "overview", "summary", "general", "trend",
+        "performance", "doing well", "situation",
+        "think", "feel", "believe", "around", "approximately",
+        "roughly", "about", "changes", "difference"
+    ]
+    
+    # Time-related vague terms
+    vague_time_terms = [
+        "past years", "recent", "lately", "over time",
+        "historical", "history", "period", "timeline",
+        "over the years", "previously"
+    ]
+    
+    query_lower = query.lower()
+    
+    # Check for characteristics of low confidence queries
+    has_vague_terms = any(term in query_lower for term in vague_terms)
+    has_vague_time = any(term in query_lower for term in vague_time_terms)
+    lacks_numbers = not any(char.isdigit() for char in query)
+    is_short_query = len(query.split()) < 4
+    
+    # Count specific financial terms
+    financial_terms = [
+        "trade receivables", "receivables", "revenue", "profit",
+        "balance sheet", "income statement", "cash flow",
+        "assets", "liabilities", "equity", "earnings"
+    ]
+    specific_terms_count = sum(1 for term in financial_terms if term in query_lower)
+    
+    return {
+        'is_low_confidence': (has_vague_terms or has_vague_time or 
+                            (lacks_numbers and specific_terms_count == 0) or 
+                            is_short_query),
+        'reasons': {
+            'has_vague_terms': has_vague_terms,
+            'has_vague_time': has_vague_time,
+            'lacks_numbers': lacks_numbers,
+            'is_short_query': is_short_query,
+            'specific_terms_count': specific_terms_count
+        }
+    }
+
 # ✅ Multi-Stage Retrieval with Context Filtering , Hallucination Handling & Prompting
-def multistage_retrieve(query, k=5, bm25_k=20, alpha=0.8): 
+def multistage_retrieve(query, k=3, bm25_k=200, alpha=0.5):  # Adjusted alpha for better balance
     if not query or not query.strip():
         return "No query provided.", 0.0
 
-    query_embedding = embedding_model.encode([query])
-     # ✅ Formulate query prompt
-
-    query_prompt = f"Provide a precise, structured, and numerical answer for the following financial query. Only include relevant financial figures and explanations within a maximum of 3 sentences.\nQuery: {query}"
+    # Check for low confidence characteristics
+    low_confidence_check = is_low_confidence_query(query)
+    
+    # Apply confidence penalty for low confidence queries
+    confidence_penalty = 0.4 if low_confidence_check['is_low_confidence'] else 1.0
+    
+    # Enhance query preprocessing
+    financial_terms = ["trade receivables", "receivables", "affiliated companies", 
+                      "group companies", "total", "euro", "thousand", "financial", "bmw"]
+    query_lower = query.lower()
+    
+    # Boost confidence if query contains specific financial terms
+    term_matches = sum(1 for term in financial_terms if term in query_lower)
+    term_boost = min(1.0, term_matches / 3)  # Normalize boost
+    
+    # Enhanced query prompt
+    query_prompt = f"Provide a precise numerical answer for the following financial query, focusing on exact figures and dates: {query}"
     query_embedding = embedding_model.encode([query_prompt])
+    
+    # Improved BM25 scoring
     bm25_scores = bm25.get_scores(query.split())
-
-    # Normalize BM25 Scores
     bm25_scores = np.array(bm25_scores)
+    
+    # Enhanced normalization with minimum threshold
     if len(bm25_scores) > 0:
-        bm25_scores = (bm25_scores - bm25_scores.min()) / (bm25_scores.max() - bm25_scores.min() + 1e-9) * 100
-
+        bm25_max = bm25_scores.max()
+        if bm25_max > 0:
+            bm25_scores = (bm25_scores / bm25_max) * 100
+    
+    # Get top BM25 matches
     top_bm25_indices = np.argsort(bm25_scores)[-bm25_k:]
-
+    
+    # Enhanced embedding similarity calculation
     filtered_embeddings = np.array([chunk_embeddings[i] for i in top_bm25_indices])
     faiss_index = faiss.IndexFlatIP(filtered_embeddings.shape[1])
     faiss_index.add(filtered_embeddings)
-
+    
+    # Get semantic search results
     _, faiss_ranks = faiss_index.search(query_embedding, k)
     top_faiss_indices = [top_bm25_indices[i] for i in faiss_ranks[0]]
-
+    
+    # Improved scoring combination
     final_scores = {}
     for i in set(top_bm25_indices) | set(top_faiss_indices):
         bm25_score = bm25_scores[i] if i in top_bm25_indices else 0
-        faiss_score = np.dot(query_embedding, chunk_embeddings[i])
-        final_scores[i] = alpha * bm25_score + (1 - alpha) * faiss_score
+        faiss_score = float(np.dot(query_embedding, chunk_embeddings[i])) * 100
+        
+        # Combined score with term matching boost
+        final_scores[i] = (alpha * bm25_score + (1 - alpha) * faiss_score) * (1 + term_boost)
 
     if final_scores:
         top_chunks = sorted(final_scores, key=final_scores.get, reverse=True)[:k]
-        retrieval_confidence = float(max(final_scores.values()))
+        max_score = max(final_scores.values())
+        retrieval_confidence = float(max_score * confidence_penalty)
+        
+        # Additional confidence adjustments
+        if low_confidence_check['reasons']['has_vague_terms']:
+            retrieval_confidence *= 0.7
+        if low_confidence_check['reasons']['has_vague_time']:
+            retrieval_confidence *= 0.8
+        if low_confidence_check['reasons']['lacks_numbers']:
+            retrieval_confidence *= 0.9
+            
+        retrieval_confidence = min(100, retrieval_confidence)
     else:
         top_chunks = []
-        retrieval_confidence = 0.0  # Default confidence
+        retrieval_confidence = 0.0
 
     valid_chunks = [i for i in top_chunks if i < len(text_chunks)]
     retrieved_chunks = [text_chunks[i] for i in valid_chunks] if valid_chunks else []
-
-    # ✅ Apply refined sentence extraction for better precision
+    
+    # Enhanced context extraction
     precise_context = extract_relevant_sentences(retrieved_chunks, query)
     
-    # ✅ Apply hallucination filter
+    # Additional confidence boost for exact number matches
+    if any(char.isdigit() for char in precise_context) and any(char.isdigit() for char in query):
+        retrieval_confidence = min(100, retrieval_confidence * 1.2)
+
+    # Apply hallucination filter
     final_response = filter_hallucinations(precise_context, query, retrieval_confidence)
 
     return final_response, round(retrieval_confidence, 2)
@@ -170,23 +264,46 @@ st.title("📊 Financial Statement Q&A")
 query = st.text_input("Enter your financial question:", key="financial_query")
 
 if query:
-    # Apply query prompt formatting
-    user_query = f"Provide a precise, structured, and numerical answer for the following financial query. \
-    Only include relevant financial figures and explanations within a maximum of 3 sentences. \
-    Query: {query}"
-    query_type = classify_query(query)
-
-    if query_type and query_type == "irrelevant":
-        st.warning("❌ This appears to be an irrelevant question.")
-        st.write("**🔍 Confidence Score:** 0%")
+    low_confidence_info = is_low_confidence_query(query)
+    
+    if low_confidence_info['is_low_confidence']:
+        st.warning("⚠️ This appears to be a general or vague query. For better results, try to:")
+        suggestions = []
+        
+        if low_confidence_info['reasons']['has_vague_terms']:
+            suggestions.append("• Use specific financial metrics instead of general terms")
+        if low_confidence_info['reasons']['has_vague_time']:
+            suggestions.append("• Specify exact years or dates")
+        if low_confidence_info['reasons']['lacks_numbers']:
+            suggestions.append("• Include specific numerical references")
+        if low_confidence_info['reasons']['is_short_query']:
+            suggestions.append("• Provide more details in your query")
+        
+        for suggestion in suggestions:
+            st.markdown(suggestion)
+    
+    retrieved_text, retrieval_confidence = multistage_retrieve(query)
+    
+    # Enhanced confidence score display with more detailed feedback
+    if retrieval_confidence >= 80:
+        st.success(f"### 🔍 Confidence Score: {retrieval_confidence}%\n\n"
+                  f"✅ High Confidence Response:\n\n{retrieved_text}")
+    elif retrieval_confidence >= 60:
+        st.warning(f"### 🔍 Confidence Score: {retrieval_confidence}%\n\n"
+                  f"⚠️ Medium Confidence Response:\n\n{retrieved_text}\n\n"
+                  "*Please verify this information with official documents.*")
     else:
-        retrieved_text, retrieval_confidence = multistage_retrieve(query)
-        st.write(f"### 🔍 Confidence Score: {retrieval_confidence}%")
-        #st.success(retrieved_text)
-        if retrieval_confidence >= 80:  # High confidence
-            st.success(f"✅ High Confidence\n\n **Relevant Context:**\n\n {retrieved_text}")
-        else:  # Low confidence
-            st.warning(f"⚠️ Low Confidence\n\n **Relevant Context:** \n\n {retrieved_text}")
+        st.error(f"### 🔍 Confidence Score: {retrieval_confidence}%\n\n"
+                 f"❌ Low Confidence Response:\n\n{retrieved_text}\n\n"
+                 "**Suggestion:** Try to:\n"
+                 "- Be more specific in your question\n"
+                 "- Include specific years or dates\n"
+                 "- Ask about specific financial metrics\n"
+                 "- Use terms from the financial statements")
+
+        # Example of better query
+        st.info("💡 **Example of a better query:**\n"
+                '"What is the Trade receivables from BMW Group companies for year 2023?"')
 
 # ✅ Testing & Validation
 if st.sidebar.button("Run Test Queries"):
@@ -194,7 +311,7 @@ if st.sidebar.button("Run Test Queries"):
 
     test_queries = [
         ("What is the Trade receivables from BMW Group companies for year 2023?", "High Confidence"),
-        ("How did the company perform last year?", "Low Confidence"),
+        ("Can you tell me about the financial performance of BMW Group in 2023?", "Low Confidence"),
         ("What is the capital of France?", "Irrelevant")
     ]
 

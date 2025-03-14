@@ -179,14 +179,21 @@ if query:
     if query_type and query_type == "irrelevant":
         st.warning("❌ This appears to be an irrelevant question.")
         st.write("**🔍 Confidence Score:** 0%")
+    elif query_type == "less relevant":
+    st.warning("⚠️ This question might not be directly related to financial data but still retrieving available information.")
+    retrieved_text, retrieval_confidence = multistage_retrieve(query)
+    st.write(f"### 🔍 Confidence Score: {retrieval_confidence}%")
+    if retrieval_confidence >= 50:
+        st.warning(f"⚠️ Medium Confidence\n\n **Relevant Context:**\n\n {retrieved_text}")
     else:
-        retrieved_text, retrieval_confidence = multistage_retrieve(query)
-        st.write(f"### 🔍 Confidence Score: {retrieval_confidence}%")
-        #st.success(retrieved_text)
-        if retrieval_confidence >= 80:  # High confidence
-            st.success(f"✅ High Confidence\n\n **Relevant Context:**\n\n {retrieved_text}")
-        else:  # Low confidence
-            st.warning(f"⚠️ Low Confidence\n\n **Relevant Context:** \n\n {retrieved_text}")
+        st.error(f"🚨 Low Confidence\n\n **Potentially Unreliable Context:**\n\n {retrieved_text}")
+else:
+    retrieved_text, retrieval_confidence = multistage_retrieve(query)
+    st.write(f"### 🔍 Confidence Score: {retrieval_confidence}%")
+    if retrieval_confidence >= 80:  # High confidence
+        st.success(f"✅ High Confidence\n\n **Relevant Context:**\n\n {retrieved_text}")
+    else:  # Low confidence
+        st.warning(f"⚠️ Low Confidence\n\n **Relevant Context:**\n\n {retrieved_text}")
 
 # ✅ Testing & Validation
 if st.sidebar.button("Run Test Queries"):
@@ -199,19 +206,27 @@ if st.sidebar.button("Run Test Queries"):
     ]
 
     for test_query, confidence_level in test_queries:
-        query_type = classify_query(test_query)
+    query_type = classify_query(test_query)
 
-        if query_type == "irrelevant":
-            st.sidebar.write(f"**🔹 Query:** {test_query} (❌ Irrelevant)")
-            st.sidebar.write("**🔍 Confidence Score:** 0%")
-            st.sidebar.write("⚠️ No relevant financial data available.")
-            continue
-
+    if query_type == "irrelevant":
+        st.sidebar.write(f"**🔹 Query:** {test_query} (❌ Irrelevant)")
+        st.sidebar.write("**🔍 Confidence Score:** 0%")
+        st.sidebar.write("⚠️ No relevant financial data available.")
+        continue
+    elif query_type == "less relevant":
+        st.sidebar.warning(f"⚠️ This query is **less relevant**, retrieving available data.")
         retrieved_text, retrieval_confidence = multistage_retrieve(test_query)
         st.sidebar.write(f"**🔹 Query:** {test_query}")
         st.sidebar.write(f"**🔍 Confidence Score:** {retrieval_confidence}%")
-        #st.sidebar.success(f"✅ **Relevant Information:**\n\n {retrieved_text}")
+        if retrieval_confidence >= 50:
+            st.sidebar.warning(f"⚠️ Medium Confidence\n\n **Relevant Context:**\n\n {retrieved_text}")
+        else:
+            st.sidebar.error(f"🚨 Low Confidence\n\n **Potentially Unreliable Context:**\n\n {retrieved_text}")
+    else:
+        retrieved_text, retrieval_confidence = multistage_retrieve(test_query)
+        st.sidebar.write(f"**🔹 Query:** {test_query}")
+        st.sidebar.write(f"**🔍 Confidence Score:** {retrieval_confidence}%")
         if retrieval_confidence >= 80:
             st.sidebar.success(f"✅ High Confidence\n\n **Relevant Context:**\n\n {retrieved_text}")
         else:
-            st.sidebar.warning(f"⚠️ Low Confidence**\n\n **Relevant Context:** \n\n {retrieved_text}")
+            st.sidebar.warning(f"⚠️ Low Confidence\n\n **Relevant Context:**\n\n {retrieved_text}")

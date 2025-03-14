@@ -92,8 +92,9 @@ def classify_query(query, threshold=0.45):
     
     # Fuzzy matching as a fallback
     best_match, score = process.extractOne(query, relevant_keywords)
-    if score > 80:
-    elif 50 <= score <= 80:
+     if score > 80:
+        return "relevant"
+    elif 20 <= score <= 80:
         return "less relevant"
     else:
         return "irrelevant"
